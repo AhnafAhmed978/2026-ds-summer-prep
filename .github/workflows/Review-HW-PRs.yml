@@ -76,13 +76,6 @@ permissions:
   pull-requests: write
   contents: write
   issues: write
-  # 'workflows' isn't a valid key here (that's a GitHub App permission name,
-  # different system). 'actions' is the real workflow-YAML analog. Not fully
-  # confirmed this is the actual fix for the merge failures, unlike the
-  # source I originally cited, which turned out to be about a GitHub App
-  # token, not GITHUB_TOKEN -- see the enhanced error logging below, which
-  # will report GitHub's actual stated reason next time instead of guessing.
-  actions: write
 
 jobs:
   check-and-merge:
@@ -267,6 +260,28 @@ jobs:
               });
             }
 
+            // Sync has only ever updated labels, never the review itself, so a
+            // PR that once failed and got a REQUEST_CHANGES review keeps that
+            // review sitting there even after the label's removed. If main
+            // requires reviews to be resolved before merging, that stale review
+            // blocks the merge and the token can't clear it by approving (that's
+            // permanently disallowed), so dismiss it explicitly instead.
+            async function dismissStaleReviews(pr) {
+              const { data: reviews } = await github.rest.pulls.listReviews({ owner, repo, pull_number: pr.number });
+              const stale = reviews.filter((r) => r.user?.login === 'github-actions[bot]' && r.state === 'CHANGES_REQUESTED');
+              for (const review of stale) {
+                await github.rest.pulls
+                  .dismissReview({
+                    owner,
+                    repo,
+                    pull_number: pr.number,
+                    review_id: review.id,
+                    message: 'All checks pass now, clearing this so the PR can merge.',
+                  })
+                  .catch((err) => console.log(`  #${pr.number}: couldn't dismiss stale review - ${err.message}`));
+              }
+            }
+
             async function evaluatePR(prNumber) {
               try {
                 let pr = (await github.rest.pulls.get({ owner, repo, pull_number: prNumber })).data;
@@ -372,6 +387,7 @@ jobs:
                 if (applicable.length === 0) {
                   console.log(`  #${pr.number}: all checks passed, merging`);
                   if (!DRY_RUN) {
+                    await dismissStaleReviews(pr);
                     await github.rest.pulls
                       .merge({
                         owner,
