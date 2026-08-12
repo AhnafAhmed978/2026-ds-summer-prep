@@ -119,10 +119,14 @@ jobs:
               if (reason === 'wrong-location') {
                 return `\`${filename}\` needs to be inside \`${SUBMISSION_DIR}\`, it isn't right now`;
               }
-              // 'bad-name'
+              // 'bad-name' -- this now covers everything from a near-miss typo
+              // to a file that was never meant to be a submission at all
+              // (.gitignore, a lecture notebook, a scratch file), so the wording
+              // stays neutral rather than assuming they were attempting the
+              // pattern and just got it wrong.
               return (
-                `\`${filename}\` doesn't match the expected naming pattern ` +
-                `(e.g. \`EK_Week_3_HW.ipynb\` or \`EK_week_03_exercise.ipynb\`)`
+                `\`${filename}\` isn't recognized as a homework submission ` +
+                `(expected something like \`EK_Week_3_HW.ipynb\` or \`EK_week_03_exercise.ipynb\`)`
               );
             }
 
@@ -175,8 +179,14 @@ jobs:
             function classifyFile(filename) {
               const basename = filename.split('/').pop();
               if (basename.toLowerCase().startsWith(TEMPLATE_PREFIX.toLowerCase())) return 'template';
-              if (!filename.startsWith(SUBMISSION_DIR)) return 'wrong-location';
+              // Name shape is checked BEFORE location on purpose: "wrong-location"
+              // should only ever fire for a file that genuinely looks like a
+              // homework submission and just landed in the wrong folder. Checking
+              // location first would tell a student ".gitignore needs to be
+              // inside homeworks/", which is nonsense, .gitignore was never
+              // going to be a submission no matter where it lives.
               if (!NAME_RE.test(basename)) return 'bad-name';
+              if (!filename.startsWith(SUBMISSION_DIR)) return 'wrong-location';
               return 'valid';
             }
 
