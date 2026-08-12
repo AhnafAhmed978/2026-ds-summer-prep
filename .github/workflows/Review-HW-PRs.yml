@@ -182,7 +182,7 @@ jobs:
 
             async function evaluatePR(prNumber) {
               try {
-                const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number: prNumber });
+                let pr = (await github.rest.pulls.get({ owner, repo, pull_number: prNumber })).data;
 
                 if (pr.draft) return;
 
@@ -200,11 +200,20 @@ jobs:
                   return;
                 }
 
-                // GitHub computes this async; right after a push it can be null
-                // for a bit. Skip and let the next run (event or backstop) pick
-                // it back up rather than guessing.
+                // GitHub computes this async and can return null while it's
+                // running, especially the very first time anyone's queried a
+                // given PR (e.g. a large pre-existing backlog this workflow
+                // has never looked at before). Give it a few short chances to
+                // finish within this run -- re-fetching is what actually
+                // triggers/checks the job, just waiting doesn't -- before
+                // falling back to letting the next run pick it up.
+                for (let attempt = 1; pr.mergeable === null && attempt < 3; attempt++) {
+                  await new Promise((resolve) => setTimeout(resolve, 3000));
+                  pr = (await github.rest.pulls.get({ owner, repo, pull_number: prNumber })).data;
+                }
+
                 if (pr.mergeable === null) {
-                  console.log(`  #${pr.number}: mergeable status still computing, skipping this cycle`);
+                  console.log(`  #${pr.number}: mergeable status still computing after retries, skipping this cycle`);
                   return;
                 }
 
