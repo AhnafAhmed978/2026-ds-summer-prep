@@ -76,6 +76,13 @@ permissions:
   pull-requests: write
   contents: write
   issues: write
+  # 'workflows' isn't a valid key here (that's a GitHub App permission name,
+  # different system). 'actions' is the real workflow-YAML analog. Not fully
+  # confirmed this is the actual fix for the merge failures, unlike the
+  # source I originally cited, which turned out to be about a GitHub App
+  # token, not GITHUB_TOKEN -- see the enhanced error logging below, which
+  # will report GitHub's actual stated reason next time instead of guessing.
+  actions: write
 
 jobs:
   check-and-merge:
@@ -373,7 +380,17 @@ jobs:
                         merge_method: MERGE_METHOD,
                         sha: pr.head.sha, // guards against merging a commit newer than what we just checked
                       })
-                      .catch((err) => console.log(`  #${pr.number}: merge failed - ${err.message}`));
+                      .catch((err) => {
+                        // Octokit errors carry more detail than err.message alone --
+                        // status and the API's own specific reason, sometimes a docs
+                        // link. Log all of it so a failure is diagnosable straight
+                        // from this log, not guessed at from unrelated forum posts.
+                        const apiMessage = err.response?.data?.message;
+                        const docsUrl = err.response?.data?.documentation_url;
+                        console.log(`  #${pr.number}: merge failed [${err.status || '?'}] - ${err.message}`);
+                        if (apiMessage && apiMessage !== err.message) console.log(`    reason: ${apiMessage}`);
+                        if (docsUrl) console.log(`    docs: ${docsUrl}`);
+                      });
                   }
                 }
               } catch (err) {
