@@ -15,9 +15,15 @@
 #                why. If a previously-failing check starts passing, its label
 #                is removed on the next run.
 #
-# Naming convention expected:  {initials OR Firstname_Lastname}_Week_{N}_HW.ipynb
-#                               inside the homeworks/ folder
-# Template expected at:         homeworks/DONT_EDIT_MAKE_COPY_Week_{N}_HW.ipynb
+# Naming conventions accepted (two eras, both currently in use). Submissions
+# always go in homeworks/, only the template's location differs:
+#   old:  homeworks/{initials OR Firstname_Lastname}_Week_{N}_HW.ipynb
+#         template: homeworks/DONT_EDIT_MAKE_COPY_Week_{N}_HW.ipynb
+#   new:  homeworks/{initials OR Firstname_Lastname}_week_{NN}_exercise.ipynb
+#         template: Week-{NN}/DONT_EDIT_MAKE_COPY_week_{NN}_exercise.ipynb
+# A trailing "copy" (as "_copy" or " copy", however Jupyter/the OS happened to
+# name the duplicate) is tolerated in either era, harmless, doesn't create
+# any ambiguity about which file or week it is.
 #
 # SCOPE: only ever acts on PRs from an actual fork (students, who don't have
 # write access to this repo). A PR whose branch lives in this same repo --
@@ -82,30 +88,61 @@ jobs:
             const DRY_RUN = context.payload.inputs?.dry_run === 'true';
 
             // ---- tunables -----------------------------------------------------
-            // Accepts 2-4 letter initials (EK) OR one-or-more name segments
-            // (e.g. Firstname_Lastname) ahead of _Week_<number>, with
-            // an optional _HW before the extension. Some students use their
-            // full name instead of initials to dodge an initials collision --
-            // that's still one unambiguous file, so it's not worth failing a
-            // PR over either.
-            const NAME_RE = /^[A-Za-z]+(?:_[A-Za-z]+)*_Week_(\d+)(?:_HW)?\.ipynb$/i;
+            // Two conventions currently in use, both accepted:
+            //   old: {name}_Week_N_HW.ipynb        (homeworks/, template also there)
+            //   new: {name}_week_NN_exercise.ipynb (homeworks/ or Week-NN/, template
+            //        always lives in Week-NN/ regardless of where the student put
+            //        their own copy)
+            // {name} is 2-4 letter initials OR one-or-more Firstname_Lastname-style
+            // segments. The underscore right before the week number is optional too
+            // (Week1 as well as Week_1), same reasoning as making _HW optional:
+            // harmless, doesn't create any ambiguity.
+            const NAME_RE = /^[A-Za-z]+(?:_[A-Za-z]+)*_Week_?(\d+)(_HW|_exercise)?(?:[ _]copy)?\.ipynb$/i;
             const SUBMISSION_DIR = 'homeworks/';
-            const TEMPLATE_PREFIX = 'DONT_EDIT_MAKE_COPY_Week_';
+            // Matches the template regardless of era -- old and new both start with
+            // this, only the casing of "week" and what follows differs. Checked
+            // case-insensitively since the new template uses a lowercase "week".
+            const TEMPLATE_PREFIX = 'DONT_EDIT_MAKE_COPY';
             const MERGE_METHOD = 'squash'; // 'merge' | 'squash' | 'rebase'
 
             const OUR_LABELS = ['bug', 'duplicate', 'invalid', 'question'];
+
+            // One specific line per offending file instead of one generic
+            // message for the whole PR -- "please remove those changes" is
+            // wrong advice for someone whose real submission just has a typo
+            // in the name, they need to rename it, not delete it.
+            function explainInvalidFile(filename) {
+              const reason = classifyFile(filename);
+              if (reason === 'template') {
+                return `\`${filename}\` is the template itself, don't edit it, make your own copy instead`;
+              }
+              if (reason === 'wrong-location') {
+                return `\`${filename}\` needs to be inside \`${SUBMISSION_DIR}\`, it isn't right now`;
+              }
+              // 'bad-name'
+              return (
+                `\`${filename}\` doesn't match the expected naming pattern ` +
+                `(e.g. \`EK_Week_3_HW.ipynb\` or \`EK_week_03_exercise.ipynb\`)`
+              );
+            }
+
+            // Every entry returns an array of lines, not a single string, so
+            // 'invalid' can produce one bullet per offending file while the
+            // rest just produce one.
             const REASONS = {
-              bug: () =>
-                'This PR has a merge conflict with `main`. Resolve it and push again.',
-              duplicate: (names) =>
+              bug: () => ['This PR has a merge conflict with `main`. Resolve it and push again.'],
+              duplicate: (names) => [
                 `This PR includes more than one homework file (${names.join(', ')}). ` +
-                `Keep only your own Week submission.`,
-              invalid: (names) =>
-                `This PR changes files other than your homework submission ` +
-                `(${names.join(', ')}). Please remove those changes.`,
-              question: () =>
-                "This still matches the blank template, looks like the homework " +
-                "hasn't been filled in yet. Complete your answers and push again.",
+                  `Keep only your own Week submission.`,
+              ],
+              invalid: (names) => names.map((n) => `This PR changes ${explainInvalidFile(n)}.`),
+              question: (subReason) => [
+                subReason === 'template-missing'
+                  ? "Couldn't find a template matching the week number in your filename -- " +
+                    'double check you have the right week number.'
+                  : "This still matches the blank template, looks like the homework hasn't " +
+                    'been filled in yet. Complete your answers and push again.',
+              ],
             };
             // ---------------------------------------------------------------------
 
@@ -129,14 +166,22 @@ jobs:
               }
             }
 
-            function isValidHwName(filename) {
+            // Reports *why* a file isn't a valid submission, not just whether --
+            // 'template' (touched the template itself), 'wrong-location' (right
+            // shape, wrong folder), 'bad-name' (doesn't match the pattern at all),
+            // or 'valid'. Each maps to a different, specific troubleshooting
+            // message below, since "please remove those changes" is actively
+            // wrong advice for someone whose real submission just has a typo.
+            function classifyFile(filename) {
               const basename = filename.split('/').pop();
-              // The template itself matches the same shape (letters, underscores,
-              // _Week_N_HW.ipynb) -- explicitly exclude it so touching the
-              // template counts as touching "something that's not your
-              // submission" instead of slipping through as a real one.
-              if (basename.startsWith(TEMPLATE_PREFIX)) return false;
-              return filename.startsWith(SUBMISSION_DIR) && NAME_RE.test(basename);
+              if (basename.toLowerCase().startsWith(TEMPLATE_PREFIX.toLowerCase())) return 'template';
+              if (!filename.startsWith(SUBMISSION_DIR)) return 'wrong-location';
+              if (!NAME_RE.test(basename)) return 'bad-name';
+              return 'valid';
+            }
+
+            function isValidHwName(filename) {
+              return classifyFile(filename) === 'valid';
             }
 
             // Adds/removes labels to match `applicable`, returns only the ones
@@ -164,7 +209,9 @@ jobs:
             }
 
             async function requestChanges(pr, newLabels, reasonArgs) {
-              const body = newLabels.map((l) => `- ${REASONS[l](reasonArgs[l])}`).join('\n');
+              const body = newLabels
+                .flatMap((l) => REASONS[l](reasonArgs[l]).map((line) => `- ${line}`))
+                .join('\n');
               console.log(`  #${pr.number}: flagging ${newLabels.join(', ')}`);
               if (DRY_RUN) {
                 console.log(`  #${pr.number}: [dry run] would request changes:\n${body}`);
@@ -245,8 +292,15 @@ jobs:
                 let questionUndetermined = false;
                 if (matching.length === 1 && nonMatching.length === 0) {
                   const basename = matching[0].filename.split('/').pop();
-                  const week = basename.match(NAME_RE)[1];
-                  const templatePath = `${SUBMISSION_DIR}${TEMPLATE_PREFIX}${week}_HW.ipynb`;
+                  const [, week, suffix] = basename.match(NAME_RE);
+                  // New convention (_exercise): template always lives in the
+                  // week-numbered folder itself, regardless of whether the
+                  // student's own copy landed there or in homeworks/.
+                  // Old convention (_HW or no suffix): unchanged, homeworks/.
+                  const templatePath =
+                    suffix && suffix.toLowerCase() === '_exercise'
+                      ? `Week-${week}/DONT_EDIT_MAKE_COPY_week_${week}_exercise.ipynb`
+                      : `${SUBMISSION_DIR}DONT_EDIT_MAKE_COPY_Week_${week}_HW.ipynb`;
 
                   const templateSrc = await getNotebookSource(templatePath, pr.base.ref);
                   const submissionSrc = await getNotebookSource(matching[0].filename, pr.head.sha);
@@ -261,8 +315,11 @@ jobs:
                   } else if (templateSrc === null || templateSrc.trim() === submissionSrc.trim()) {
                     // Missing/unreadable template (e.g. a bad week number) fails
                     // closed into the same bucket as "not filled in" -- we can't
-                    // verify it either way, so it doesn't get to pass.
+                    // verify it either way, so it doesn't get to pass. Track
+                    // which of the two it actually was so the comment can say
+                    // something specific instead of guessing.
                     applicable.push('question');
+                    reasonArgs.question = templateSrc === null ? 'template-missing' : 'blank';
                   }
                 }
 
