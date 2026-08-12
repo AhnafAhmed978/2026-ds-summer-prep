@@ -76,17 +76,6 @@ permissions:
   pull-requests: write
   contents: write
   issues: write
-  # Required even though this workflow never touches .github/workflows/ itself.
-  # GitHub Support confirmed (community discussion #194847, May 2026): pulls.merge
-  # returns 403 "Resource not accessible by integration" for a PR that's behind
-  # base if base's own workflow file has changed since the PR was opened -- true
-  # here after ~10 rounds of edits to this file. #200 and #208 hit exactly this;
-  # dismissStaleReviews() didn't fix it because stale reviews were never the
-  # actual blocker.
-  # `workflows` IS a valid GITHUB_TOKEN permission scope. An earlier pass tried
-  # `workflows: write` and wrongly concluded it was invalid syntax -- the real
-  # schema rejection at the time was an unrelated error, not this key.
-  workflows: write
 
 jobs:
   check-and-merge:
